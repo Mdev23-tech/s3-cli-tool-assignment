@@ -7,6 +7,8 @@ import typer
 from os import getenv
 from dotenv import load_dotenv
 from botocore.exceptions import ClientError
+from boto3.s3.transfer import TransferConfig
+import os
 from urllib.request import urlopen
 from hashlib import md5
 from time import localtime
@@ -141,6 +143,70 @@ def read_policy(bucket: str):
     except ClientError as e:
         logger.error(e)
 
+@app.command()
+def upload_file(bucket_name: str, file_path: str, object_name: str = None):
+    """
+    ფაილის ატვირთვა: პატარა ფაილებისთვის PutObject, დიდებისთვის Multipart.
+    ასევე ამოწმებს MIME ტიპს.
+    """
+    if not object_name:
+        object_name = os.path.basename(file_path)
+
+    # 1. MIME ვალიდაცია (მოთხოვნილი ფუნქციონალი)
+    try:
+        mime = magic.Magic(mime=True)
+        file_type = mime.from_file(file_path)
+        allowed_types = ['image/jpeg', 'image/png', 'video/mp4', 'application/pdf']
+        
+        if file_type not in allowed_types:
+            logger.error(f"აკრძალული ფორმატი: {file_type}")
+            return
+    except Exception as e:
+        logger.error(f"ვალიდაციის შეცდომა: {e}")
+        return
+
+    # 2. Multipart კონფიგურაცია (დიდი ფაილების ატვირთვისთვის)
+    # თუ ფაილი 20MB-ზე მეტია, ბიბლიოთეკა მას ავტომატურად დაჭრის ნაწილებად.
+    config = TransferConfig(
+        multipart_threshold=20 * 1024 * 1024, # 20MB
+        max_concurrency=10,
+        use_threads=True
+    )
+
+    s3_resource = boto3.resource('s3')
+    try:
+        logger.info(f"იტვირთება {file_path} (ტიპი: {file_type})...")
+        s3_resource.Bucket(bucket_name).upload_file(
+            file_path, 
+            object_name, 
+            Config=config
+        )
+        logger.info(f"✅ ფაილი '{object_name}' წარმატებით აიტვირთა!")
+    except Exception as e:
+        logger.error(f"ატვირთვა ჩაიშალა: {e}")
+
+@app.command()
+def set_lifecycle(bucket: str, days: int = 120):
+    """ბაკეტზე აწესებს Lifecycle წესს: ფაილები წაიშლება 120 დღის შემდეგ"""
+    try:
+        lifecycle_config = {
+            'Rules': [
+                {
+                    'ID': 'AutoDeleteOldFiles',
+                    'Status': 'Enabled',
+                    'Filter': {'Prefix': ''}, # ვრცელდება ყველა ფაილზე
+                    'Expiration': {'Days': days}
+                }
+            ]
+        }
+        s3_client.put_bucket_lifecycle_configuration(
+            Bucket=bucket,
+            LifecycleConfiguration=lifecycle_config
+        )
+        logger.info(f"✅ Lifecycle წესი გააქტიურდა: '{bucket}'-ში ფაილები {days} დღეში წაიშლება.")
+    except ClientError as e:
+        logger.error(f"Lifecycle შეცდომა: {e}")
+        
 if __name__ == "__main__":
     app()
     
