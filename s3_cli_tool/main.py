@@ -173,7 +173,14 @@ def upload_file(bucket_name: str, file_path: str, object_name: str = None):
         use_threads=True
     )
 
-    s3_resource = boto3.resource('s3')
+    s3_resource = boto3.resource(
+        's3',
+        aws_access_key_id=getenv("aws_access_key_id"),
+        aws_secret_access_key=getenv("aws_secret_access_key"),
+        aws_session_token=getenv("aws_session_token"),
+        region_name=getenv("aws_region_name")
+    )
+
     try:
         logger.info(f"იტვირთება {file_path} (ტიპი: {file_type})...")
         s3_resource.Bucket(bucket_name).upload_file(
